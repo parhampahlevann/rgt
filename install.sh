@@ -118,22 +118,22 @@ manual_download_instructions() {
     echo
     colorize yellow "Please follow these steps to manually download and install RGT core:"
     echo
-    echo "1. Download the 'RGT-x86-64-linux.zip' file from the following URL:"
+    echo "1. Download the 'RGT_x86_64_linux.zip' file from the following URL:"
     echo
-    colorize yellow "   https://github.com/black-sec/RGT/raw/main/core/RGT-x86-64-linux.zip"
+    colorize yellow "   https://github.com/black-sec/RGT/raw/main/core/RGT_x86_64_linux.zip"
     echo
     echo "   You can use a browser or wget on a system with access:"
-    echo "   wget https://github.com/black-sec/RGT/raw/main/core/RGT-x86-64-linux.zip"
+    echo "   wget https://github.com/black-sec/RGT/raw/main/core/RGT_x86_64_linux.zip -O RGT_x86_64_linux.zip"
     echo
     echo "2. Upload the downloaded file to /root/ on the server using SFTP."
     echo
     echo "3. Log in to the server via SSH and extract the file:"
     echo
     echo "   mkdir -p /root/rgt-core"
-    echo "   unzip /root/RGT-x86-64-linux.zip -d /root/rgt-core"
+    echo "   unzip /root/RGT_x86_64_linux.zip -d /root/rgt-core"
     echo "   mv /root/rgt-core/rgt /root/rgt-core/rgt"
     echo "   chmod +x /root/rgt-core/rgt"
-    echo "   rm /root/RGT-x86-64-linux.zip"
+    echo "   rm /root/RGT_x86_64_linux.zip"
     echo
     echo "4. Re-run the script to continue setup."
     press_key
@@ -164,32 +164,51 @@ download_and_extract_rgt() {
         sleep 1
         return 0
     fi
-    DOWNLOAD_URL="https://github.com/black-sec/RGT/raw/main/core/RGT-x86-64-linux.zip"
+
+    # Correct upstream filename uses underscores (RGT_x86_64_linux.zip), not hyphens.
+    # Try the github.com raw link first, then fall back to raw.githubusercontent.com
+    # which is sometimes reachable even when github.com itself is filtered.
+    local candidate_urls=(
+        "https://github.com/black-sec/RGT/raw/main/core/RGT_x86_64_linux.zip"
+        "https://raw.githubusercontent.com/black-sec/RGT/main/core/RGT_x86_64_linux.zip"
+    )
     DOWNLOAD_DIR=$(mktemp -d)
     ZIP_FILE="$DOWNLOAD_DIR/rgt.zip"
-    colorize yellow "Downloading RGT core..."
-    if ! curl -sSL -o "$ZIP_FILE" "$DOWNLOAD_URL"; then
+    local downloaded=0
+    for url in "${candidate_urls[@]}"; do
+        colorize yellow "Downloading RGT core from ${url} ..."
+        if curl -fsSL -o "$ZIP_FILE" "$url" && validate_zip_file "$ZIP_FILE"; then
+            downloaded=1
+            break
+        fi
+        colorize yellow "That source failed or returned an invalid file, trying next mirror if any..."
+    done
+    if [[ "$downloaded" -ne 1 ]]; then
         rm -rf "$DOWNLOAD_DIR"
-        colorize red "Failed to download RGT core."
-        manual_download_instructions
-    fi
-    if ! validate_zip_file "$ZIP_FILE"; then
-        rm -rf "$DOWNLOAD_DIR"
+        colorize red "Failed to download RGT core from all known sources."
         manual_download_instructions
     fi
     colorize yellow "Extracting RGT..."
     mkdir -p "$CONFIG_DIR"
-    if ! unzip -q "$ZIP_FILE" -d "$CONFIG_DIR"; then
+    if ! unzip -q -o "$ZIP_FILE" -d "$CONFIG_DIR"; then
         colorize red "Failed to extract RGT"
         rm -rf "$DOWNLOAD_DIR"
         manual_download_instructions
+    fi
+    # The binary inside the archive should be named "rgt", but some archives use
+    # different casing (e.g. "RGT"); find it case-insensitively as a fallback.
+    if [[ ! -f "${CONFIG_DIR}/rgt" ]]; then
+        found_bin=$(find "$CONFIG_DIR" -maxdepth 2 -type f -iname "rgt" | head -n 1)
+        if [[ -n "$found_bin" && "$found_bin" != "${CONFIG_DIR}/rgt" ]]; then
+            mv "$found_bin" "${CONFIG_DIR}/rgt"
+        fi
     fi
     if [[ ! -f "${CONFIG_DIR}/rgt" ]]; then
         colorize red "RGT binary not found in zip file"
         rm -rf "$DOWNLOAD_DIR"
         manual_download_instructions
     fi
-    mv "${CONFIG_DIR}/rgt" "${RGT_BIN}"
+    mv "${CONFIG_DIR}/rgt" "${RGT_BIN}" 2>/dev/null
     chmod +x "${RGT_BIN}"
     rm -rf "$DOWNLOAD_DIR"
     if [[ ! -x "${RGT_BIN}" ]]; then
